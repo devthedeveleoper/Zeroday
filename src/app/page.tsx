@@ -1,14 +1,32 @@
-import { supabase } from "@/lib/supabase";
+import { createClient } from "@/utils/supabase/server";
+
 import { Navbar } from "@/components/Navbar";
 import { ProblemCard } from "@/components/ProblemCard";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   const { data: problems } = await supabase
     .from("problems")
     .select("id, title, slug, difficulty")
     .order("id", { ascending: true });
+
+  const solvedIds = new Set<number>();
+  if (user && problems) {
+    const { data: submissions } = await supabase
+      .from("submissions")
+      .select("problem_id")
+      .eq("user_id", user.id)
+      .eq("status", "Accepted");
+
+    submissions?.forEach((s) => solvedIds.add(s.problem_id));
+  }
 
   return (
     <main className="min-h-screen bg-black text-white selection:bg-purple-500/30">
@@ -30,17 +48,13 @@ export default async function Home() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {problems?.map((problem) => (
-            <ProblemCard key={problem.id} {...problem} />
+            <ProblemCard
+              key={problem.id}
+              {...problem}
+              isSolved={solvedIds.has(problem.id)}
+            />
           ))}
         </div>
-
-        {(!problems || problems.length === 0) && (
-          <div className="text-center py-20 border border-dashed border-gray-800 rounded-2xl">
-            <p className="text-gray-500">
-              System initialization... No problems found.
-            </p>
-          </div>
-        )}
       </div>
     </main>
   );

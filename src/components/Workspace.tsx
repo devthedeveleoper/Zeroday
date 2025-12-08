@@ -3,7 +3,34 @@
 import { useState } from "react";
 import Editor from "@monaco-editor/react";
 import ReactMarkdown from "react-markdown";
-import { Play, Loader2, Trophy } from "lucide-react";
+import {
+  Play,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+  Trophy,
+  Terminal,
+  SquareTerminal,
+  FileText,
+  History,
+  RefreshCcw,
+} from "lucide-react";
+
+const LANGUAGES = [
+  { id: "python", name: "Python" },
+  { id: "javascript", name: "JavaScript" },
+  { id: "cpp", name: "C++" },
+  { id: "java", name: "Java" },
+  { id: "go", name: "Go" },
+];
+
+interface Submission {
+  id: number;
+  status: string;
+  language: string;
+  code: string;
+  created_at: string;
+}
 
 interface WorkspaceProps {
   problem: {
@@ -17,28 +44,58 @@ interface WorkspaceProps {
 }
 
 export function Workspace({ problem }: WorkspaceProps) {
-  const [code, setCode] = useState(
-    problem.starter_code?.python || "# Write your python code here"
+  const [language, setLanguage] = useState("python");
+  const [code, setCode] = useState(problem.starter_code?.python || "");
+
+  const [activeTab, setActiveTab] = useState<"input" | "output">("input");
+  const [leftTab, setLeftTab] = useState<"description" | "submissions">(
+    "description"
   );
 
+  const [customInput, setCustomInput] = useState("");
   const [output, setOutput] = useState<string>("");
+
+  const [submissions, setSubmissions] = useState<Submission[]>([]);
+
   const [isRunning, setIsRunning] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
 
   const cleanDescription = problem.description.replace(/\\n/g, "\n");
 
+  const handleLanguageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newLang = e.target.value;
+    setLanguage(newLang);
+    setCode(problem.starter_code[newLang] || "// Language not configured");
+  };
+
+  const fetchSubmissions = async () => {
+    if (leftTab === "submissions") return;
+    setLeftTab("submissions");
+    setIsLoadingHistory(true);
+    try {
+      const res = await fetch(`/api/problems/${problem.slug}/submissions`);
+      const data = await res.json();
+      setSubmissions(data.data || []);
+    } catch {
+      console.error("Failed to fetch history");
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
   const runCode = async () => {
     setIsRunning(true);
     setStatus("idle");
+    setActiveTab("output");
     setOutput("Running...");
 
     try {
       const res = await fetch("/api/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, language: "python" }),
+        body: JSON.stringify({ code, language, stdin: customInput }),
       });
 
       const data = await res.json();
@@ -47,10 +104,10 @@ export function Workspace({ problem }: WorkspaceProps) {
         setOutput(data.error);
         setStatus("error");
       } else {
-        setOutput(data.output);
+        setOutput(data.output || "No output returned.");
         setStatus("success");
       }
-    } catch (_err) {
+    } catch {
       setOutput("System Error: Failed to reach execution engine.");
       setStatus("error");
     } finally {
@@ -61,27 +118,31 @@ export function Workspace({ problem }: WorkspaceProps) {
   const submitCode = async () => {
     setIsSubmitting(true);
     setStatus("idle");
+    setActiveTab("output");
     setOutput("Running against hidden tests...");
 
     try {
       const res = await fetch("/api/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code,
-          language: "python",
-          slug: problem.slug,
-        }),
+        body: JSON.stringify({ code, language, slug: problem.slug }),
       });
 
       const data = await res.json();
 
       if (data.status === "Accepted") {
-        setOutput("🎉 Accepted! All test cases passed. You are a legend.");
+        setOutput("🎉 Accepted! All test cases passed.");
         setStatus("success");
+        if (leftTab === "submissions") {
+          const historyRes = await fetch(
+            `/api/problems/${problem.slug}/submissions`
+          );
+          const historyData = await historyRes.json();
+          setSubmissions(historyData.data || []);
+        }
       } else if (data.status === "Wrong Answer") {
         setOutput(
-          `❌ Wrong Answer\n\nInput: ${data.failedCase.input}\nExpected: ${data.failedCase.expected}\nActual: ${data.failedCase.actual}`
+          `❌ Wrong Answer\n\nInput:\n${data.failedCase.input}\n\nExpected:\n${data.failedCase.expected}\n\nActual:\n${data.failedCase.actual}`
         );
         setStatus("error");
       } else if (data.status === "Runtime Error") {
@@ -91,7 +152,7 @@ export function Workspace({ problem }: WorkspaceProps) {
         setOutput("System Error: " + (data.error || "Unknown error"));
         setStatus("error");
       }
-    } catch (_err) {
+    } catch {
       setOutput("Network Error: Could not submit.");
       setStatus("error");
     } finally {
@@ -102,52 +163,123 @@ export function Workspace({ problem }: WorkspaceProps) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 h-[calc(100vh-64px)] bg-black text-white">
       {}
-      <div className="border-r border-gray-800 bg-black p-8 overflow-y-auto h-full custom-scrollbar">
-        <div className="mb-6 border-b border-gray-800 pb-6">
-          <h1 className="text-3xl font-extrabold tracking-tight mb-3 text-white">
-            {problem.title}
-          </h1>
-          <div className="flex gap-3">
-            {}
-            <span
-              className={`px-3 py-1 rounded-full text-xs font-bold font-mono 
-              ${
-                problem.difficulty === "Easy"
-                  ? "bg-green-500/10 text-green-400"
-                  : problem.difficulty === "Medium"
-                  ? "bg-yellow-500/10 text-yellow-400"
-                  : "bg-red-500/10 text-red-400"
-              }`}
-            >
-              {problem.difficulty}
-            </span>
-          </div>
+      <div className="border-r border-gray-800 bg-black flex flex-col h-full overflow-hidden">
+        <div className="flex border-b border-gray-800 bg-gray-900/50">
+          <button
+            onClick={() => setLeftTab("description")}
+            className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors
+                ${
+                  leftTab === "description"
+                    ? "text-white border-b-2 border-purple-500 bg-gray-800/50"
+                    : "text-gray-500 hover:text-gray-300"
+                }`}
+          >
+            <FileText size={16} /> Description
+          </button>
+          <button
+            onClick={fetchSubmissions}
+            className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors
+                ${
+                  leftTab === "submissions"
+                    ? "text-white border-b-2 border-purple-500 bg-gray-800/50"
+                    : "text-gray-500 hover:text-gray-300"
+                }`}
+          >
+            <History size={16} /> Submissions
+          </button>
         </div>
 
-        <div className="prose prose-invert prose-p:text-gray-300 prose-headings:text-white max-w-none">
-          <ReactMarkdown
-            components={{
-              h1: ({ node: _node, ...props }) => (
-                <h1
-                  className="text-2xl font-bold mt-6 mb-4 text-white"
-                  {...props}
-                />
-              ),
-              code: ({ node: _node, ...props }) => (
-                <code
-                  className="bg-gray-800/50 text-purple-300 px-1.5 py-0.5 rounded text-sm font-mono border border-gray-700/50"
-                  {...props}
-                />
-              ),
-              pre: ({ node: _node, ...props }) => (
-                <div className="relative my-4 overflow-hidden rounded-lg border border-gray-800 bg-[#111] p-4">
-                  <pre className="text-sm font-mono text-gray-300" {...props} />
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+          {leftTab === "description" ? (
+            <>
+              <h1 className="text-3xl font-extrabold tracking-tight mb-4 text-white">
+                {problem.title}
+              </h1>
+              <div className="flex gap-3 mb-6">
+                <span
+                  className={`px-3 py-1 rounded-full text-xs font-bold font-mono 
+                        ${
+                          problem.difficulty === "Easy"
+                            ? "bg-green-500/10 text-green-400"
+                            : problem.difficulty === "Medium"
+                            ? "bg-yellow-500/10 text-yellow-400"
+                            : "bg-red-500/10 text-red-400"
+                        }`}
+                >
+                  {problem.difficulty}
+                </span>
+              </div>
+              <div className="prose prose-invert prose-p:text-gray-300 prose-headings:text-white max-w-none">
+                <ReactMarkdown
+                  components={{
+                    h1: ({ node, ...props }) => (
+                      <h1 className="text-2xl font-bold mt-6 mb-4" {...props} />
+                    ),
+
+                    code: ({ node, ...props }) => (
+                      <code
+                        className="bg-gray-800/50 text-purple-300 px-1.5 py-0.5 rounded text-sm font-mono"
+                        {...props}
+                      />
+                    ),
+
+                    pre: ({ node, ...props }) => (
+                      <div className="bg-[#111] p-4 rounded-lg border border-gray-800 my-4 overflow-x-auto">
+                        <pre {...props} />
+                      </div>
+                    ),
+                  }}
+                >
+                  {cleanDescription}
+                </ReactMarkdown>
+              </div>
+            </>
+          ) : (
+            <div className="space-y-3">
+              {isLoadingHistory ? (
+                <div className="flex justify-center py-10">
+                  <Loader2 className="animate-spin text-purple-500" />
                 </div>
-              ),
-            }}
-          >
-            {cleanDescription}
-          </ReactMarkdown>
+              ) : submissions.length === 0 ? (
+                <div className="text-center text-gray-500 py-10">
+                  No submissions yet. Go solve it!
+                </div>
+              ) : (
+                submissions.map((sub) => (
+                  <div
+                    key={sub.id}
+                    className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center justify-between group hover:border-gray-600 transition-all"
+                  >
+                    <div>
+                      <div
+                        className={`text-sm font-bold mb-1 ${
+                          sub.status === "Accepted"
+                            ? "text-green-400"
+                            : "text-red-400"
+                        }`}
+                      >
+                        {sub.status}
+                      </div>
+                      <div className="text-xs text-gray-500 font-mono">
+                        {new Date(sub.created_at).toLocaleString()} •{" "}
+                        {sub.language}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setCode(sub.code);
+                        setLanguage(sub.language);
+                      }}
+                      className="p-2 bg-gray-800 text-gray-400 rounded-lg opacity-0 group-hover:opacity-100 hover:text-white hover:bg-purple-600 transition-all"
+                      title="Restore Code"
+                    >
+                      <RefreshCcw size={16} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -155,9 +287,17 @@ export function Workspace({ problem }: WorkspaceProps) {
       <div className="flex flex-col h-full bg-[#1e1e1e] border-l border-gray-800">
         <div className="h-14 border-b border-gray-800 bg-black/40 backdrop-blur flex items-center justify-between px-6">
           <div className="flex items-center gap-3">
-            <span className="text-sm font-medium text-gray-300 font-mono">
-              main.py
-            </span>
+            <select
+              value={language}
+              onChange={handleLanguageChange}
+              className="bg-gray-800 text-gray-300 text-xs font-medium px-3 py-1.5 rounded-md border border-gray-700 outline-none focus:border-gray-500 hover:bg-gray-750 cursor-pointer"
+            >
+              {LANGUAGES.map((lang) => (
+                <option key={lang.id} value={lang.id}>
+                  {lang.name}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -169,11 +309,9 @@ export function Workspace({ problem }: WorkspaceProps) {
                 <Loader2 size={14} className="animate-spin" />
               ) : (
                 <Play size={14} />
-              )}
+              )}{" "}
               Run
             </button>
-
-            {}
             <button
               onClick={submitCode}
               disabled={isRunning || isSubmitting}
@@ -183,7 +321,7 @@ export function Workspace({ problem }: WorkspaceProps) {
                 <Loader2 size={14} className="animate-spin" />
               ) : (
                 <Trophy size={14} />
-              )}
+              )}{" "}
               Submit
             </button>
           </div>
@@ -192,7 +330,7 @@ export function Workspace({ problem }: WorkspaceProps) {
         <div className="flex-1 relative">
           <Editor
             height="100%"
-            defaultLanguage="python"
+            language={language}
             value={code}
             onChange={(value) => setCode(value || "")}
             theme="vs-dark"
@@ -204,36 +342,62 @@ export function Workspace({ problem }: WorkspaceProps) {
           />
         </div>
 
-        {}
-        <div
-          className={`transition-all duration-300 ease-in-out border-t border-gray-800 bg-black flex flex-col ${
-            output ? "h-[300px]" : "h-12"
-          }`}
-        >
-          <div className="flex items-center justify-between px-6 py-3 bg-[#111] border-b border-gray-800/50">
-            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
-              Console
-            </span>
-            {output && (
-              <button
-                onClick={() => setOutput("")}
-                className="text-[10px] text-gray-600 hover:text-gray-400 uppercase font-bold"
-              >
-                Clear
-              </button>
+        <div className="h-[250px] border-t border-gray-800 bg-[#111] flex flex-col">
+          <div className="flex border-b border-gray-800">
+            <button
+              onClick={() => setActiveTab("input")}
+              className={`flex items-center gap-2 px-6 py-2 text-xs font-bold uppercase tracking-wider transition-colors
+                    ${
+                      activeTab === "input"
+                        ? "bg-[#1e1e1e] text-white border-t-2 border-purple-500"
+                        : "text-gray-500 hover:text-gray-300"
+                    }`}
+            >
+              <SquareTerminal size={14} /> Input
+            </button>
+            <button
+              onClick={() => setActiveTab("output")}
+              className={`flex items-center gap-2 px-6 py-2 text-xs font-bold uppercase tracking-wider transition-colors
+                    ${
+                      activeTab === "output"
+                        ? "bg-[#1e1e1e] text-white border-t-2 border-purple-500"
+                        : "text-gray-500 hover:text-gray-300"
+                    }`}
+            >
+              <Terminal size={14} /> Output
+            </button>
+          </div>
+
+          <div className="flex-1 p-4 bg-[#1e1e1e] overflow-hidden">
+            {activeTab === "input" ? (
+              <textarea
+                value={customInput}
+                onChange={(e) => setCustomInput(e.target.value)}
+                className="w-full h-full bg-[#111] text-gray-300 font-mono text-sm p-4 rounded-lg border border-gray-800 focus:border-purple-500 outline-none resize-none"
+                placeholder="Enter your input here..."
+              />
+            ) : (
+              <div className="h-full w-full bg-[#111] rounded-lg border border-gray-800 p-4 overflow-auto custom-scrollbar">
+                {status === "success" && (
+                  <div className="flex items-center gap-2 mb-2 text-green-400 text-xs font-bold uppercase">
+                    <CheckCircle2 size={12} /> Success
+                  </div>
+                )}
+                {status === "error" && (
+                  <div className="flex items-center gap-2 mb-2 text-red-400 text-xs font-bold uppercase">
+                    <AlertCircle size={12} /> Failed
+                  </div>
+                )}
+                <pre
+                  className={`font-mono text-sm leading-relaxed whitespace-pre-wrap ${
+                    status === "error" ? "text-red-300" : "text-gray-300"
+                  }`}
+                >
+                  {output || "Run code to see output..."}
+                </pre>
+              </div>
             )}
           </div>
-          {output && (
-            <div className="flex-1 p-6 overflow-y-auto custom-scrollbar">
-              <pre
-                className={`font-mono text-sm leading-relaxed whitespace-pre-wrap ${
-                  status === "error" ? "text-red-400" : "text-gray-300"
-                }`}
-              >
-                {output}
-              </pre>
-            </div>
-          )}
         </div>
       </div>
     </div>

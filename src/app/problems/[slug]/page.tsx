@@ -10,7 +10,7 @@ interface ProblemPageProps {
 }
 
 export default async function ProblemPage({ params }: ProblemPageProps) {
-  const { slug } = await params; 
+  const { slug } = await params;
 
   const { data: problem } = await supabase
     .from("problems")

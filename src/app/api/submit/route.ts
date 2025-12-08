@@ -1,8 +1,18 @@
-import { supabase } from "@/lib/supabase";
+import { createClient } from "@/utils/supabase/server";
 import { NextResponse } from "next/server";
 
 export async function POST(request: Request) {
   const { code, language, slug } = await request.json();
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const { data: problem } = await supabase
     .from("problems")
@@ -19,18 +29,13 @@ export async function POST(request: Request) {
     .eq("problem_id", problem.id);
 
   if (!testCases || testCases.length === 0) {
-    return NextResponse.json({ error: "No test cases found" }, { status: 500 });
+    return NextResponse.json({ error: "No test cases." }, { status: 500 });
   }
 
+  let status = "Accepted";
+  let failedCase = null;
+
   for (const testCase of testCases) {
-    let driverCode = code + "\n";
-
-    if (slug === "two-sum") {
-      driverCode += `print(two_sum(${testCase.input}))`;
-    } else if (slug === "reverse-string") {
-      driverCode += `s = ${testCase.input}\nreverse_string(s)\nprint(s)`;
-    }
-
     try {
       const response = await fetch("https://emkc.org/api/v2/piston/execute", {
         method: "POST",
@@ -38,39 +43,47 @@ export async function POST(request: Request) {
         body: JSON.stringify({
           language: language,
           version: "*",
-          files: [{ content: driverCode }],
+          files: [{ content: code }],
+
+          stdin: testCase.input,
         }),
       });
 
       const result = await response.json();
 
       if (result.run.stderr) {
-        return NextResponse.json({
-          status: "Runtime Error",
-          failedCase: {
-            input: testCase.input,
-            error: result.run.stderr,
-          },
-        });
+        status = "Runtime Error";
+        failedCase = { input: testCase.input, error: result.run.stderr };
+        break;
       }
 
       const actualOutput = result.run.stdout ? result.run.stdout.trim() : "";
       const expectedOutput = testCase.expected_output.trim();
 
       if (actualOutput !== expectedOutput) {
-        return NextResponse.json({
-          status: "Wrong Answer",
-          failedCase: {
-            input: testCase.input,
-            expected: expectedOutput,
-            actual: actualOutput,
-          },
-        });
+        status = "Wrong Answer";
+        failedCase = {
+          input: testCase.input,
+          expected: expectedOutput,
+          actual: actualOutput,
+        };
+        break;
       }
     } catch (error) {
-      return NextResponse.json({ error: "Execution failed" }, { status: 500 });
+      return NextResponse.json(
+        { error: "Execution Engine Failed" },
+        { status: 500 }
+      );
     }
   }
 
-  return NextResponse.json({ status: "Accepted" });
+  await supabase.from("submissions").insert({
+    user_id: user.id,
+    problem_id: problem.id,
+    code: code,
+    language: language,
+    status: status,
+  });
+
+  return NextResponse.json({ status, failedCase });
 }

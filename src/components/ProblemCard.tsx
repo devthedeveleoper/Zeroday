@@ -1,14 +1,20 @@
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, CheckCircle2 } from "lucide-react";
 
 interface ProblemCardProps {
   id: number;
   title: string;
   slug: string;
   difficulty: "Easy" | "Medium" | "Hard";
+  isSolved?: boolean;
 }
 
-export function ProblemCard({ title, slug, difficulty }: ProblemCardProps) {
+export function ProblemCard({
+  title,
+  slug,
+  difficulty,
+  isSolved,
+}: ProblemCardProps) {
   const difficultyColor = {
     Easy: "text-green-400 bg-green-400/10",
     Medium: "text-yellow-400 bg-yellow-400/10",
@@ -18,15 +24,27 @@ export function ProblemCard({ title, slug, difficulty }: ProblemCardProps) {
   return (
     <Link
       href={`/problems/${slug}`}
-      className="group block p-6 rounded-2xl bg-gray-900 border border-gray-800 hover:border-gray-600 transition-all hover:shadow-2xl hover:shadow-purple-900/10"
+      className={`group block p-6 rounded-2xl border transition-all hover:shadow-2xl hover:shadow-purple-900/10 
+        ${
+          isSolved
+            ? "bg-gray-900/50 border-green-900/50"
+            : "bg-gray-900 border-gray-800 hover:border-gray-600"
+        }`}
     >
       <div className="flex justify-between items-start">
         <div>
-          <span
-            className={`inline-block px-3 py-1 rounded-full text-xs font-bold mb-3 ${difficultyColor[difficulty]}`}
-          >
-            {difficulty}
-          </span>
+          <div className="flex items-center gap-3 mb-3">
+            <span
+              className={`inline-block px-3 py-1 rounded-full text-xs font-bold ${difficultyColor[difficulty]}`}
+            >
+              {difficulty}
+            </span>
+            {isSolved && (
+              <span className="flex items-center gap-1 text-xs font-bold text-green-500 uppercase tracking-wider">
+                <CheckCircle2 size={12} /> Solved
+              </span>
+            )}
+          </div>
           <h3 className="text-xl font-bold text-gray-100 group-hover:text-white mb-1">
             {title}
           </h3>
